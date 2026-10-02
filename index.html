@@ -168,7 +168,7 @@ const WINSVG=`<svg class="sign" viewBox="40 0 980 540" aria-label="WIN" role="im
 <use href="#shp" fill="#e2b04a" stroke="#e2b04a" stroke-width="14" stroke-linejoin="round"/>
 <use href="#shp" fill="url(#wm)"/>
 <g opacity=".55"><use href="#shp" fill="url(#gl)"/></g></svg>`;
-let S={bld:{name:'',roles:[]},bd:{n:'',t:'c',c:1,ds:''},sc:'moz',z:10,order:[],i:0,flip:false,phase:'setup',list:false};
+let S={pub:true,bld:{name:'',roles:[]},bd:{n:'',t:'c',c:1,ds:''},sc:'moz',z:10,order:[],i:0,flip:false,phase:'setup',list:false};
 function ri(k){const a=new Uint32Array(1),lim=Math.floor(4294967296/k)*k;do{crypto.getRandomValues(a)}while(a[0]>=lim);return a[0]%k}
 function shuffle(){
   const arr=[];SC[S.sc].z[S.z].forEach(([id,c])=>{for(let j=0;j<c;j++)arr.push(R[id])});
@@ -177,33 +177,83 @@ function shuffle(){
 }
 function pickSc(k){S.sc=k;S.z=+Object.keys(SC[k].z)[0]||0;render()}
 let USER=[];
-function regUser(u){const l=[];u.roles.forEach((r,j)=>{const id=u.id+'_'+j;R[id]=[r.n,r.t,r.d||'توضیح این نقش را گرداننده می‌دهد.'];l.push([id,r.c])});SC[u.id]={n:u.n,s:'سناریوی من',u:1,z:{[u.roles.reduce((a,r)=>a+r.c,0)]:l}}}
+const h=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function clean(u){if(!u||typeof u.n!=='string'||!Array.isArray(u.roles))return null;
+ const roles=u.roles.slice(0,30).map(r=>r&&typeof r.n==='string'&&r.n.trim()?{n:r.n.trim().slice(0,30),t:['c','m','x'].includes(r.t)?r.t:'c',c:Math.max(1,Math.min(20,parseInt(r.c)||1)),d:typeof r.d==='string'?r.d.trim().slice(0,200):''}:null).filter(Boolean);
+ if(!u.n.trim()||!roles.length)return null;return{n:u.n.trim().slice(0,40),roles}}
+function regUser(u,label,own){const l=[];u.roles.forEach((r,j)=>{const id=u.id+'_'+j;R[id]=[h(r.n),r.t,h(r.d||'توضیح این نقش را گرداننده می‌دهد.')];l.push([id,r.c])});SC[u.id]={n:h(u.n),s:label||'سناریوی من',u:own===false?0:1,z:{[u.roles.reduce((a,r)=>a+r.c,0)]:l}}}
+function loadUser(){try{USER=(JSON.parse(localStorage.getItem('win.sc')||'[]')||[]).map(u=>{const c=clean(u);if(c)c.id=String(u.id||'u'+Date.now()+Math.random().toString(36).slice(2,6));return c}).filter(Boolean);USER.forEach(u=>regUser(u))}catch(e){USER=[]}}
+// آدرس HTTPS سرور اشتراک سناریو (api.php یا worker.js). خالی = بدون همگام‌سازی آنلاین
+const SYNC_DEFAULT='';
+let SYNC_URL=SYNC_DEFAULT;try{SYNC_URL=localStorage.getItem('win.srv')||SYNC_DEFAULT}catch(e){}
+S.pub=!!SYNC_URL;
+// آدرس فایل scenarios.json روی GitHub Pages (فقط خواندنی). مثال: https://name.github.io/win/scenarios.json
+const CATALOG_DEFAULT='';
+// سناریوهای پیش‌فرض: هر سناریو را به این شکل اینجا اضافه کن (خروجی دکمه‌ی «کپی JSON» همین قالب است):
+// {"n":"نام سناریو","roles":[{"n":"نقش","t":"m","c":1,"d":"توضیح"},{"n":"شهروند","t":"c","c":3,"d":""}]}   (t: c=شهر، m=مافیا، x=مستقل)
+const DEFAULTS=[];
+function applyCat(list){Object.keys(SC).filter(k=>k.startsWith('cat')).forEach(k=>delete SC[k]);const names=DEFAULTS.map(u=>u&&u.n);const extra=(Array.isArray(list)?list:[]).slice(0,50).filter(u=>u&&!names.includes(u.n));const all=DEFAULTS.map(u=>[u,'سناریوی WIN']).concat(extra.map(u=>[u,'مشترک']));all.forEach(([u,l],i)=>{const c=clean(u);if(c){c.id='cat'+i;regUser(c,l,false);SC[c.id].sid=u&&u.id}});if(!SC[S.sc]){S.sc='moz';S.z=10}}
+function loadCatalog(){
+  {let c=[];try{c=JSON.parse(localStorage.getItem('win.cat')||'[]')}catch(e){}applyCat(c)}
+  try{fetch(SYNC_URL||CATALOG_DEFAULT||'scenarios.json',{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(l=>{try{localStorage.setItem('win.cat',JSON.stringify(l))}catch(e){}applyCat(l);if(S.phase==='setup')render()}).catch(()=>{})}catch(e){}
+}
+function adminKey(ask){let k='';try{k=localStorage.getItem('win.key')||''}catch(e){}if(!k&&ask){k=prompt('رمز ناظر را وارد کن:')||'';if(k)try{localStorage.setItem('win.key',k)}catch(e){}}return k}
+async function api(body){const k=adminKey(true);if(!k||!SYNC_URL)throw 0;const r=await fetch(SYNC_URL,{method:'POST',headers:{'Content-Type':'application/json','X-Key':k},body:JSON.stringify(body)});
+ if(r.status===403){try{localStorage.removeItem('win.key')}catch(e){}throw 1}if(!r.ok)throw 2;return r.json()}
+async function publishCur(){const u=curUser();if(!u)return;
+ if(!SYNC_URL){alert('سرور اشتراک تنظیم نشده. آدرس HTTPS سرور را در صفحه‌ی «+ سناریوی جدید» (پایین) وارد کن؛ راهنمایش داخل WIN-server.zip است.');return}
+ try{const l=await api({op:'add',n:u.n,roles:u.roles});USER=USER.filter(x=>x.id!==u.id);delete SC[u.id];saveUser();try{localStorage.setItem('win.cat',JSON.stringify(l))}catch(e){}applyCat(l);
+  const m=Object.keys(SC).find(k=>k.startsWith('cat')&&SC[k].n===h(u.n));alert('برای همه ثبت شد؛ هر گوشی بار بعدی که اپ را با اینترنت باز کند، آن را می‌گیرد.');pickSc(m||'moz')}
+ catch(e){alert(e===1?'رمز ناظر اشتباه است.':e===0?'رمز ناظر لازم است.':'ثبت نشد؛ اینترنت و آدرس سرور را بررسی کن. سناریو روی همین گوشی ذخیره ماند.')}}
+async function delShared(){const sid=SC[S.sc]&&SC[S.sc].sid;if(!sid||!confirm('از همه‌ی گوشی‌ها حذف شود؟'))return;
+ try{const l=await api({op:'del',id:sid});try{localStorage.setItem('win.cat',JSON.stringify(l))}catch(e){}applyCat(l);pickSc('moz')}catch(e){alert(e===1?'رمز ناظر اشتباه است.':'حذف نشد.')}}
+function setSrv(){const v=(document.getElementById('srv').value||'').trim();
+ if(v&&!/^(https:\/\/|http:\/\/localhost)/.test(v)){alert('آدرس باید با https:// شروع شود.');return}
+ try{if(v)localStorage.setItem('win.srv',v);else localStorage.removeItem('win.srv')}catch(e){}
+ SYNC_URL=v||SYNC_DEFAULT;S.pub=!!SYNC_URL;loadCatalog();alert(v?'آدرس سرور ذخیره شد.':'آدرس سرور پاک شد.');render()}
+function copyCatalog(){let c=[];try{c=JSON.parse(localStorage.getItem('win.cat')||'[]')}catch(e){}if(!Array.isArray(c))c=[];const names=new Set(c.map(x=>x.n));
+ const all=c.map(x=>({n:x.n,roles:x.roles})).concat(USER.filter(u=>!names.has(u.n)).map(u=>({n:u.n,roles:u.roles})));
+ copyText(JSON.stringify(all,null,1),'کاتالوگ کامل کپی شد؛ کل محتوای scenarios.json را با آن جایگزین کن.')}
+function copyText(t,msg){
+  if(navigator.share&&/Android|iPhone|iPad/i.test(navigator.userAgent)){navigator.share({text:t}).catch(()=>{});return}
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(()=>alert(msg)).catch(()=>prompt('این متن را کپی کن:',t))}else prompt('این متن را کپی کن:',t)
+}
+function curUser(){return USER.find(u=>u.id===S.sc)}
+function shareCode(){const u=curUser();if(!u)return;copyText('WIN1:'+btoa(unescape(encodeURIComponent(JSON.stringify({n:u.n,roles:u.roles})))),'کد کپی شد؛ برای دوستانت بفرست تا در «+ سناریوی جدید» وارد کنند.')}
+function copyJson(){const u=curUser();if(!u)return;copyText(JSON.stringify({n:u.n,roles:u.roles},null,1),'JSON کپی شد؛ داخل آرایه‌ی scenarios.json بگذار.')}
+function importCode(){const el=document.getElementById('imp'),t=(el.value||'').trim().replace(/^WIN1:/,'').replace(/\s/g,'');
+ try{const c=clean(JSON.parse(decodeURIComponent(escape(atob(t)))));if(!c)throw 0;c.id='u'+Date.now();USER.push(c);regUser(c);saveUser();pickSc(c.id)}catch(e){alert('کد معتبر نیست.')}}
 function saveUser(){try{localStorage.setItem('win.sc',JSON.stringify(USER))}catch(e){}}
-function loadUser(){try{USER=JSON.parse(localStorage.getItem('win.sc')||'[]');USER.forEach(regUser)}catch(e){USER=[]}}
 function delScenario(){if(!confirm('این سناریو حذف شود؟'))return;USER=USER.filter(u=>u.id!==S.sc);delete SC[S.sc];saveUser();pickSc('moz')}
 function bAdd(){const d=S.bd,n=d.n.trim();if(!n)return;S.bld.roles.push({n,t:d.t,c:Math.max(1,Math.min(10,d.c)),d:d.ds.trim()});S.bd.n='';S.bd.ds='';render()}
 function bDel(j){S.bld.roles.splice(j,1);render()}
-function bSave(){const b=S.bld,name=b.name.trim();if(!name||!b.roles.length)return;const u={id:'u'+Date.now(),n:name,roles:b.roles};USER.push(u);regUser(u);saveUser();S.bld={name:'',roles:[]};pickSc(u.id)}
+function bSave(){const b=S.bld,name=b.name.trim();if(!name||!b.roles.length)return;const u={id:'u'+Date.now(),n:name,roles:b.roles};USER.push(u);regUser(u);saveUser();S.bld={name:'',roles:[]};pickSc(u.id);if(S.pub)publishCur()}
 const esc=v=>String(v).replace(/"/g,'&quot;');
 function cusUI(){
   const b=S.bld,d=S.bd,t=b.roles.reduce((a,r)=>a+r.c,0);
-  return `<div class="box"><input placeholder="نام سناریو" value="${esc(b.name)}" oninput="S.bld.name=this.value;document.getElementById('sv').disabled=!(S.bld.name.trim()&&S.bld.roles.length)">
+  return `<div class="box"><div class="rn" style="margin-bottom:8px">وارد کردن سناریو با کد</div><input id="imp" placeholder="کد WIN1:… را اینجا بچسبان"><button class="btn ghost" onclick="importCode()">افزودن با کد</button></div>
+  <div class="box"><input placeholder="نام سناریو" value="${esc(b.name)}" oninput="S.bld.name=this.value;document.getElementById('sv').disabled=!(S.bld.name.trim()&&S.bld.roles.length)">
   <div class="rn" style="margin:6px 0">افزودن نقش</div>
   <input placeholder="نام نقش" value="${esc(d.n)}" oninput="S.bd.n=this.value">
   <input placeholder="توضیح نقش (اختیاری)" value="${esc(d.ds)}" oninput="S.bd.ds=this.value">
   <div class="row" style="gap:8px"><select onchange="S.bd.t=this.value" style="flex:2"><option value="c" ${d.t==='c'?'selected':''}>تیم شهر</option><option value="m" ${d.t==='m'?'selected':''}>تیم مافیا</option><option value="x" ${d.t==='x'?'selected':''}>مستقل</option></select>
   <input type="number" min="1" max="10" value="${d.c}" oninput="S.bd.c=+this.value||1" style="flex:1" aria-label="تعداد"></div>
   <button class="btn ghost" onclick="bAdd()">افزودن نقش</button></div>
-  <div class="box">${b.roles.length?b.roles.map((r,j)=>`<div class="rl row"><div><div class="rn"><span class="tag t${r.t}"></span>${r.n}</div>${r.d?`<div class="rd">${r.d}</div>`:''}</div><div><b>×${fa(r.c)}</b> <button class="del" onclick="bDel(${j})">حذف</button></div></div>`).join(''):'<div class="rd">هنوز نقشی اضافه نکرده‌ای.</div>'}</div>
+  <div class="box">${b.roles.length?b.roles.map((r,j)=>`<div class="rl row"><div><div class="rn"><span class="tag t${r.t}"></span>${h(r.n)}</div>${r.d?`<div class="rd">${h(r.d)}</div>`:''}</div><div><b>×${fa(r.c)}</b> <button class="del" onclick="bDel(${j})">حذف</button></div></div>`).join(''):'<div class="rd">هنوز نقشی اضافه نکرده‌ای.</div>'}</div>
   <div class="sum">مجموع: ${fa(t)} بازیکن</div>
-  <button id="sv" class="btn" onclick="bSave()" ${b.name.trim()&&b.roles.length?'':'disabled'}>ذخیره‌ی سناریو</button>`;
+  ${`<label class="rd" style="display:block;margin-bottom:6px"><input type="checkbox" ${S.pub?'checked':''} onchange="S.pub=this.checked" style="width:auto;padding:0;margin:0 0 0 6px">بعد از ذخیره، برای همه‌ی گوشی‌ها ثبت شود</label>`}
+  <button id="sv" class="btn" onclick="bSave()" ${b.name.trim()&&b.roles.length?'':'disabled'}>ذخیره‌ی سناریو</button>
+  <div class="box" style="margin-top:14px"><div class="rn" style="margin-bottom:6px">سرور اشتراک (برای ثبت خودکار روی همه‌ی گوشی‌ها)</div><input id="srv" placeholder="https://example.ir/api.php" value="${esc(SYNC_URL)}" style="direction:ltr"><button class="btn ghost" onclick="setSrv()">ذخیره‌ی آدرس سرور</button></div>`;
 }
-function scBtns(){return `<div class="opts g">${Object.keys(SC).filter(k=>k!=='cus').concat('cus').map(k=>[k,SC[k]]).map(([k,v])=>`<button class="opt" aria-pressed="${k===S.sc}" onclick="pickSc('${k}')"><b>${v.n}</b><small>${v.s}</small></button>`).join('')}</div>`}
+function scBtns(){return `<div class="opts g">${Object.keys(SC).filter(k=>k!=='cus').sort((x,y)=>{const r=k=>k.startsWith('cat')?1:(SC[k].u?2:0);return r(x)-r(y)}).concat('cus').map(k=>[k,SC[k]]).map(([k,v])=>`<button class="opt" aria-pressed="${k===S.sc}" onclick="pickSc('${k}')"><b>${v.n}</b><small>${v.s}</small></button>`).join('')}</div>`}
 function pickZ(z){S.z=z;render()}
+const DIRS=[['rotateY(180deg)','rotateY(180deg)'],['rotateY(-180deg)','rotateY(180deg)'],['rotateX(180deg)','rotateX(180deg)'],['rotateX(-180deg)','rotateX(180deg)']];
+let LD=-1;
+function pickDir(){let k;do{k=ri(4)}while(k===LD);LD=k;return DIRS[k]}
 let T=null;
 function tap(){
   if(S.flip){next();return}S.flip=true;
-  document.querySelector('.card').classList.add('flip');
+  const cd=document.querySelector('.card'),d=pickDir();cd.querySelector('.front').style.transform=d[1];cd.style.transform=d[0];
   document.getElementById('hint').textContent='بعد از ۲ ثانیه یا با لمس دوباره، نفر بعدی';
   document.getElementById('bar').classList.add('go');
   T=setTimeout(next,2000);
@@ -220,7 +270,7 @@ function render(){
     a.innerHTML=`${scBtns()}
     <div class="opts">${sizes.map(z=>`<button class="opt chip" aria-pressed="${z===S.z}" onclick="pickZ(${z})">${fa(z)} نفره</button>`).join('')}</div>
     <div class="box">${sc.z[S.z].map(([id,c])=>{const r=R[id];return `<div class="rl row"><div><div class="rn"><span class="tag t${r[1]}"></span>${r[0]}</div><div class="rd">${r[2]}</div></div><div class="cnt">×${fa(c)}</div></div>`}).join('')}</div>
-    <button class="btn" onclick="shuffle()">شافل نقش‌ها و شروع پخش</button>${sc.u?'<button class="btn ghost" onclick="delScenario()">حذف این سناریو</button>':''}`;
+    <button class="btn" onclick="shuffle()">شافل نقش‌ها و شروع پخش</button>${sc.u?'<button class="btn" onclick="publishCur()">ثبت برای همه گوشی‌ها</button>':''}${SYNC_URL&&sc.sid&&adminKey(false)?'<button class="btn ghost" onclick="delShared()">حذف از همه‌ی گوشی‌ها (ناظر)</button>':''}${sc.u?'<button class="btn ghost" onclick="shareCode()">اشتراک‌گذاری با کد</button><button class="btn ghost" onclick="copyJson()">کپی JSON (برای افزودن به پیش‌فرض‌ها)</button><button class="btn ghost" onclick="copyCatalog()">کپی کاتالوگ کامل (برای scenarios.json)</button><button class="btn ghost" onclick="delScenario()">حذف این سناریو</button>':''}`;
   }else if(S.phase==='reveal'){
     const r=S.order[S.i],last=S.i+1>=S.order.length;
     a.innerHTML=`<div class="prog">بازیکن ${fa(S.i+1)} از ${fa(S.order.length)}</div>
@@ -237,7 +287,8 @@ function render(){
     <button class="btn ghost" onclick="back()">بازگشت به انتخاب سناریو</button>`;
   }
 }
-loadUser();render();
+loadCatalog();loadUser();render();
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadCatalog()});
 if('serviceWorker' in navigator&&location.protocol.startsWith('http')){navigator.serviceWorker.register('sw.js').catch(()=>{})}
 </script>
 </body>
